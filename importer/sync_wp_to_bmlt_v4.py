@@ -1,36 +1,6 @@
 #!/usr/bin/env python3
-"""
-sync_wp_to_bmlt_v4.py
-
-WordPress (nasuomi.org /wp-json/wp/v2/kokoukset) -> BMLT Admin API v4 importer.
-
-Upgrades included:
-- Periodic-run friendly: persistent geocode cache + run state under DATA_DIR (/data by default)
-- Nominatim-friendly: caching + polite delay
-- BMLT validations handled:
-  - startTime/duration format HH:MM
-  - day range 0..6
-  - venueType integer (1/2/3)
-  - comments truncated to 512 chars
-  - formatIds filtered to only valid IDs from /formats
-  - in-person requires street + (municipality/city or postal) + province (default BMLT_DEFAULT_PROVINCE)
-  - virtual requires virtual link or phone; otherwise skip with reason
-- Location field naming: send BOTH camelCase and snake_case variants to match mixed validator builds
-- Better geocode input cleanup to reduce failures (strip parentheses, normalize separators)
-
-Environment variables:
-  WP_BASE (default: https://www.nasuomi.org)
-  BMLT_BASE_URL (default: http://127.0.0.1)  [must include scheme]
-  BMLT_ADMIN_USER / BMLT_ADMIN_PASS (required)
-  BMLT_SERVICE_BODY_ID (default: 1)
-
-  BMLT_DEFAULT_LAT / BMLT_DEFAULT_LON (defaults: Helsinki center)
-  BMLT_ALLOW_FALLBACK_COORDS (0/1) (default 0)  - if 1, use default coords when geocoding fails (in-person)
-  BMLT_DEFAULT_PROVINCE (default: Uusimaa)
-
-  DATA_DIR (default: /data) - persists caches/state across runs
-"""
-
+#!/usr/bin/env python3
+import base64
 import hashlib
 import json
 import os
@@ -39,7 +9,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from urllib.parse import urlencode, urljoin
+from urllib.parse import urlencode
 
 # ----------------------------
 # Configuration
@@ -50,10 +20,13 @@ WP_ENDPOINT = "/wp-json/wp/v2/kokoukset"
 WP_PER_PAGE = 100
 
 BMLT_BASE_URL = os.environ.get("BMLT_BASE_URL", "http://127.0.0.1").strip()
-BMLT_API_PREFIX = "/api/v1"
+BMLT_API_PREFIX = os.environ.get("BMLT_API_PREFIX", "/api/v1").strip()
 BMLT_USER = os.environ.get("BMLT_ADMIN_USER")
 BMLT_PASS = os.environ.get("BMLT_ADMIN_PASS")
 SERVICE_BODY_ID = int(os.environ.get("BMLT_SERVICE_BODY_ID", "1"))
+
+# Auth mode: "basic" (default) or "token"
+BMLT_AUTH_MODE = os.environ.get("BMLT_AUTH_MODE", "basic").strip().lower()
 
 DEFAULT_LAT = float(os.environ.get("BMLT_DEFAULT_LAT", "60.1699"))
 DEFAULT_LON = float(os.environ.get("BMLT_DEFAULT_LON", "24.9384"))
@@ -324,7 +297,18 @@ def payload_fingerprint(payload: dict) -> str:
 # ----------------------------
 
 
-def bmlt_login_token():
+def auth_headers_basic() -> dict:
+    if not BMLT_USER or not BMLT_PASS:
+        print("Set BMLT_ADMIN_USER and BMLT_ADMIN_PASS.", file=sys.stderr)
+        sys.exit(1)
+    token = base64.b64encode(f"{BMLT_USER}:{BMLT_PASS}".encode("utf-8")).decode("ascii")
+    return {"Authorization": f"Basic {token}"}
+
+
+def bmlt_login_token() -> str:
+    """
+    Only used if BMLT_AUTH_MODE=token.
+    """
     require_scheme(BMLT_BASE_URL)
     if not BMLT_USER or not BMLT_PASS:
         print("Set BMLT_ADMIN_USER and BMLT_ADMIN_PASS.", file=sys.stderr)
@@ -332,22 +316,11 @@ def bmlt_login_token():
 
     url = f"{BMLT_BASE_URL}{BMLT_API_PREFIX}/auth/token"
     data = {"username": BMLT_USER, "password": BMLT_PASS}
-
-    # follow up to 3 redirects (handles proxy/front redirecting to /main_server, etc.)
-    redirects = 0
-    while True:
-        try:
-            resp = http_json("POST", url, data=data)
-            break
-        except urllib.error.HTTPError as e:
-            if e.code in (301, 302, 303, 307, 308) and redirects < 3:
-                loc = e.headers.get("Location")
-                if loc:
-                    url = urljoin(url, loc)
-                    redirects += 1
-                    continue
-            body = e.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"Login failed HTTP {e.code}: {body}") from None
+    try:
+        resp = http_json("POST", url, data=data)
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Login failed HTTP {e.code}: {body}") from None
 
     token = None
     if isinstance(resp, dict):
@@ -357,9 +330,8 @@ def bmlt_login_token():
     return token
 
 
-def bmlt_get_formats(token: str):
+def bmlt_get_formats(headers: dict):
     url = f"{BMLT_BASE_URL}{BMLT_API_PREFIX}/formats"
-    headers = {"Authorization": f"Bearer {token}"}
     data = http_json("GET", url, headers=headers)
     if not isinstance(data, list):
         raise RuntimeError(f"Unexpected /formats response (expected list): {data}")
@@ -410,9 +382,8 @@ def build_format_ids(obj: dict, format_key_to_id: dict):
     return ids, missing_keys
 
 
-def bmlt_create_meeting(token: str, payload: dict):
+def bmlt_create_meeting(headers: dict, payload: dict):
     url = f"{BMLT_BASE_URL}{BMLT_API_PREFIX}/meetings"
-    headers = {"Authorization": f"Bearer {token}"}
     return http_json("POST", url, data=payload, headers=headers)
 
 
@@ -427,10 +398,15 @@ def main():
     wp_items = fetch_wp_all()
     print(f"Fetched {len(wp_items)} meetings from WordPress.")
 
-    token = bmlt_login_token()
-    print("Authenticated to BMLT API.")
+    if BMLT_AUTH_MODE == "token":
+        token = bmlt_login_token()
+        headers = {"Authorization": f"Bearer {token}"}
+        print("Authenticated to BMLT API using bearer token.")
+    else:
+        headers = auth_headers_basic()
+        print("Authenticated to BMLT API using basic auth.")
 
-    format_key_to_id, allowed_format_ids = bmlt_get_formats(token)
+    format_key_to_id, allowed_format_ids = bmlt_get_formats(headers)
     print(f"Loaded {len(format_key_to_id)} format keys from BMLT (mapped from translations[].key).")
 
     geocode_cache = load_json_file(GEOCODE_CACHE_PATH, {})
@@ -577,7 +553,7 @@ def main():
             continue
 
         try:
-            bmlt_create_meeting(token, payload)
+            bmlt_create_meeting(headers, payload)
             created += 1
             fingerprints[str(wp_id)] = fp
 
