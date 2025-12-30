@@ -5,14 +5,14 @@ set -euo pipefail
 : "${BMLT_ADMIN_USER:?Must set BMLT_ADMIN_USER}"
 : "${BMLT_ADMIN_PASS:?Must set BMLT_ADMIN_PASS}"
 
-SYNC_INTERVAL_MINUTES="${SYNC_INTERVAL_MINUTES:-30}"
+SYNC_INTERVAL_MINUTES="${SYNC_INTERVAL_MINUTES:-1440}"
 DATA_DIR="${DATA_DIR:-/data}"
 
 mkdir -p "$DATA_DIR"
 
 echo "Waiting for BMLT API at: ${BMLT_BASE_URL}"
 for i in $(seq 1 60); do
-  if curl -fsS "${BMLT_BASE_URL}/api/v1/status" >/dev/null 2>&1; then
+  if curl -fsSL "${BMLT_BASE_URL}/api/v1/status" >/dev/null 2>&1; then
     echo "BMLT API is reachable."
     break
   fi

@@ -39,7 +39,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urljoin
 
 # ----------------------------
 # Configuration
@@ -332,11 +332,22 @@ def bmlt_login_token():
 
     url = f"{BMLT_BASE_URL}{BMLT_API_PREFIX}/auth/token"
     data = {"username": BMLT_USER, "password": BMLT_PASS}
-    try:
-        resp = http_json("POST", url, data=data)
-    except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"Login failed HTTP {e.code}: {body}") from None
+
+    # follow up to 3 redirects (handles proxy/front redirecting to /main_server, etc.)
+    redirects = 0
+    while True:
+        try:
+            resp = http_json("POST", url, data=data)
+            break
+        except urllib.error.HTTPError as e:
+            if e.code in (301, 302, 303, 307, 308) and redirects < 3:
+                loc = e.headers.get("Location")
+                if loc:
+                    url = urljoin(url, loc)
+                    redirects += 1
+                    continue
+            body = e.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"Login failed HTTP {e.code}: {body}") from None
 
     token = None
     if isinstance(resp, dict):
