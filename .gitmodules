@@ -1,0 +1,3 @@
+[submodule "bmlt-server"]
+	path = bmlt-server
+	url = https://github.com/bmlt-enabled/bmlt-server.git

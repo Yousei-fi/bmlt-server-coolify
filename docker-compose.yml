@@ -1,0 +1,52 @@
+version: "3.9"
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      BMLT_DB_NAME: ${BMLT_DB_NAME:?}
+      BMLT_DB_USER: ${BMLT_DB_USER:?}
+      BMLT_DB_PASSWORD: ${BMLT_DB_PASSWORD:?}
+      BMLT_DB_HOST: db
+      BMLT_DB_PORT: ${BMLT_DB_PORT:-3306}
+      BMLT_DB_PREFIX: ${BMLT_DB_PREFIX:-na}
+      BMLT_GOOGLE_MAPS_KEY: ${BMLT_GOOGLE_MAPS_KEY:-}
+      DB_PORT: ${BMLT_DB_PORT:-3306}
+      APP_ENV: production
+      APP_DEBUG: "false"
+      APP_URL: ${BMLT_BASE_URL:-}
+      TZ: Europe/Helsinki
+    volumes:
+      - bmlt-web-storage:/var/www/html/main_server/storage
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost/"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  db:
+    image: mariadb:10.11
+    command: --transaction-isolation=READ-COMMITTED --binlog-format=ROW
+    environment:
+      MARIADB_DATABASE: ${BMLT_DB_NAME:?}
+      MARIADB_USER: ${BMLT_DB_USER:?}
+      MARIADB_PASSWORD: ${BMLT_DB_PASSWORD:?}
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:?}
+      TZ: Europe/Helsinki
+    volumes:
+      - bmlt-db:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mariadb-admin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  bmlt-db:
+  bmlt-web-storage:
+
