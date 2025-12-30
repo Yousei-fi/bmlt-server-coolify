@@ -46,7 +46,30 @@ services:
       timeout: 5s
       retries: 10
 
+  wp_to_bmlt_importer:
+    build:
+      context: ./importer
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      WP_BASE: ${WP_BASE:-https://www.nasuomi.org}
+      BMLT_BASE_URL: ${BMLT_BASE_URL:?}
+      BMLT_ADMIN_USER: ${BMLT_ADMIN_USER:?}
+      BMLT_ADMIN_PASS: ${BMLT_ADMIN_PASS:?}
+      BMLT_SERVICE_BODY_ID: ${BMLT_SERVICE_BODY_ID:-1}
+      BMLT_DEFAULT_LAT: ${BMLT_DEFAULT_LAT:-60.1699}
+      BMLT_DEFAULT_LON: ${BMLT_DEFAULT_LON:-24.9384}
+      BMLT_ALLOW_FALLBACK_COORDS: ${BMLT_ALLOW_FALLBACK_COORDS:-0}
+      BMLT_DEFAULT_PROVINCE: ${BMLT_DEFAULT_PROVINCE:-Uusimaa}
+      SYNC_INTERVAL_MINUTES: ${SYNC_INTERVAL_MINUTES:-30}
+      DATA_DIR: /data
+    volumes:
+      - wp_to_bmlt_data:/data
+    depends_on:
+      - web
+
 volumes:
   bmlt-db:
   bmlt-web-storage:
+  wp_to_bmlt_data:
 
