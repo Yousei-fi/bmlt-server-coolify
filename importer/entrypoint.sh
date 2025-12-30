@@ -22,11 +22,31 @@ for i in $(seq 1 60); do
 done
 
 CRON_FILE="/app/crontab"
-echo "*/${SYNC_INTERVAL_MINUTES} * * * * python3 /app/sync_wp_to_bmlt_v4.py" > "$CRON_FILE"
+
+# Build cron expression from minutes
+interval=$SYNC_INTERVAL_MINUTES
+if [ "$interval" -lt 1 ] 2>/dev/null; then
+  interval=1440
+fi
+
+if [ "$interval" -ge 1440 ]; then
+  days=$(( (interval + 1439) / 1440 ))
+  cron_expr="0 0 */${days} * *"
+  human="every ${days} day(s)"
+elif [ "$interval" -ge 60 ]; then
+  hours=$(( (interval + 59) / 60 ))
+  cron_expr="0 */${hours} * * *"
+  human="every ${hours} hour(s)"
+else
+  cron_expr="*/${interval} * * * *"
+  human="every ${interval} minute(s)"
+fi
+
+echo "${cron_expr} python3 /app/sync_wp_to_bmlt_v4.py" > "$CRON_FILE"
 
 echo "Running initial sync..."
 python3 /app/sync_wp_to_bmlt_v4.py || true
 
-echo "Starting scheduler: every ${SYNC_INTERVAL_MINUTES} minutes"
+echo "Starting scheduler: ${human} (cron: ${cron_expr})"
 exec /usr/local/bin/supercronic "$CRON_FILE"
 
