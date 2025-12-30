@@ -27,7 +27,15 @@ RUN apt-get update \
 
 # Set Apache docroot and allow .htaccess for the app
 RUN sed -ri 's!/var/www/html!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/sites-available/000-default.conf /etc/apache2/sites-enabled/000-default.conf \
-    && printf '<Directory "%s">\\n    AllowOverride All\\n</Directory>\\n' "${APACHE_DOCUMENT_ROOT}" > /etc/apache2/conf-available/bmlt-override.conf \
+    && cat >/etc/apache2/conf-available/bmlt-override.conf <<'EOF' \
+ServerName localhost
+DocumentRoot /var/www/html/main_server/public
+<Directory "/var/www/html/main_server/public">
+    Options FollowSymLinks
+    AllowOverride All
+    Require all granted
+</Directory>
+EOF
     && a2enconf bmlt-override
 
 # Composer
