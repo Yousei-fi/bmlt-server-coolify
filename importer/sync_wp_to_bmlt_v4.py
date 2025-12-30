@@ -26,7 +26,7 @@ BMLT_USER = os.environ.get("BMLT_ADMIN_USER")
 BMLT_PASS = os.environ.get("BMLT_ADMIN_PASS")
 SERVICE_BODY_ID = int(os.environ.get("BMLT_SERVICE_BODY_ID", "1"))
 
-# Auth mode: "auto" (default) tries basic, then token on 401; or "basic" or "token"
+# Auth mode: "auto" (default) tries token first, then basic on 401; or "basic" or "token"
 BMLT_AUTH_MODE = os.environ.get("BMLT_AUTH_MODE", "auto").strip().lower()
 
 DEFAULT_LAT = float(os.environ.get("BMLT_DEFAULT_LAT", "60.1699"))
@@ -416,17 +416,17 @@ def main():
     format_key_to_id = {}
     allowed_format_ids = set()
 
-    def attempt_basic():
-        h = auth_headers_basic()
-        fk, allowed = try_formats_with_headers(h)
-        print("Authenticated to BMLT API using basic auth.")
-        return h, fk, allowed
-
     def attempt_token():
         token = bmlt_login_token()
         h = {"Authorization": f"Bearer {token}"}
         fk, allowed = try_formats_with_headers(h)
         print("Authenticated to BMLT API using bearer token.")
+        return h, fk, allowed
+
+    def attempt_basic():
+        h = auth_headers_basic()
+        fk, allowed = try_formats_with_headers(h)
+        print("Authenticated to BMLT API using basic auth.")
         return h, fk, allowed
 
     if BMLT_AUTH_MODE == "basic":
@@ -435,11 +435,11 @@ def main():
         headers, format_key_to_id, allowed_format_ids = attempt_token()
     else:  # auto
         try:
-            headers, format_key_to_id, allowed_format_ids = attempt_basic()
+            headers, format_key_to_id, allowed_format_ids = attempt_token()
         except urllib.error.HTTPError as e:
             if e.code == 401:
-                print("Basic auth returned 401, attempting token auth...")
-                headers, format_key_to_id, allowed_format_ids = attempt_token()
+                print("Token auth returned 401, attempting basic auth...")
+                headers, format_key_to_id, allowed_format_ids = attempt_basic()
             else:
                 body = e.read().decode("utf-8", errors="replace")
                 raise RuntimeError(f"/formats failed HTTP {e.code}: {body}") from None
