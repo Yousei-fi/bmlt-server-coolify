@@ -1,8 +1,7 @@
 FROM php:8.3-apache
 
 ENV APACHE_DOCUMENT_ROOT=/var/www/html/main_server/public \
-    COMPOSER_ALLOW_SUPERUSER=1 \
-    NODE_ENV=production
+    COMPOSER_ALLOW_SUPERUSER=1
 
 # Base OS + PHP extensions + Node.js (for building the UI assets)
 RUN apt-get update \
@@ -44,9 +43,12 @@ WORKDIR /var/www/html/main_server
 RUN composer install --no-dev --optimize-autoloader
 
 # Frontend assets (Svelte/Vite)
-RUN npm ci \
+RUN npm ci --include=dev \
     && npm run build \
     && rm -rf node_modules
+
+# Runtime env
+ENV NODE_ENV=production
 
 # Ensure runtime permissions
 RUN chown -R www-data:www-data /var/www/html
