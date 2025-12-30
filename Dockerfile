@@ -1,6 +1,6 @@
 FROM php:8.3-apache
 
-ENV APACHE_DOCUMENT_ROOT=/var/www/html/main_server/public \
+ENV APACHE_DOCUMENT_ROOT=/var/www/html/main_server \
     COMPOSER_ALLOW_SUPERUSER=1
 
 # Base OS + PHP extensions + Node.js (for building the UI assets)
@@ -29,8 +29,8 @@ RUN apt-get update \
 RUN sed -ri 's!/var/www/html!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/sites-available/000-default.conf /etc/apache2/sites-enabled/000-default.conf \
     && cat >/etc/apache2/conf-available/bmlt-override.conf <<'EOF'
 ServerName localhost
-DocumentRoot /var/www/html/main_server/public
-<Directory "/var/www/html/main_server/public">
+DocumentRoot /var/www/html/main_server
+<Directory "/var/www/html/main_server">
     Options FollowSymLinks
     AllowOverride All
     Require all granted
