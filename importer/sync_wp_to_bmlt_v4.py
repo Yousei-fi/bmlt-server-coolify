@@ -21,12 +21,13 @@ WP_PER_PAGE = 100
 
 BMLT_BASE_URL = os.environ.get("BMLT_BASE_URL", "http://127.0.0.1").strip()
 BMLT_API_PREFIX = os.environ.get("BMLT_API_PREFIX", "/api/v1").strip()
+BMLT_AUTH_TOKEN_PATH = os.environ.get("BMLT_AUTH_TOKEN_PATH", "/auth/token").strip()
 BMLT_USER = os.environ.get("BMLT_ADMIN_USER")
 BMLT_PASS = os.environ.get("BMLT_ADMIN_PASS")
 SERVICE_BODY_ID = int(os.environ.get("BMLT_SERVICE_BODY_ID", "1"))
 
-# Auth mode: "basic" (default) or "token"
-BMLT_AUTH_MODE = os.environ.get("BMLT_AUTH_MODE", "basic").strip().lower()
+# Auth mode: "auto" (default) tries basic, then token on 401; or "basic" or "token"
+BMLT_AUTH_MODE = os.environ.get("BMLT_AUTH_MODE", "auto").strip().lower()
 
 DEFAULT_LAT = float(os.environ.get("BMLT_DEFAULT_LAT", "60.1699"))
 DEFAULT_LON = float(os.environ.get("BMLT_DEFAULT_LON", "24.9384"))
@@ -314,7 +315,10 @@ def bmlt_login_token() -> str:
         print("Set BMLT_ADMIN_USER and BMLT_ADMIN_PASS.", file=sys.stderr)
         sys.exit(1)
 
-    url = f"{BMLT_BASE_URL}{BMLT_API_PREFIX}/auth/token"
+    auth_path = BMLT_AUTH_TOKEN_PATH or "/auth/token"
+    if not auth_path.startswith("/"):
+        auth_path = "/" + auth_path
+    url = f"{BMLT_BASE_URL}{BMLT_API_PREFIX}{auth_path}"
     data = {"username": BMLT_USER, "password": BMLT_PASS}
     try:
         resp = http_json("POST", url, data=data)
@@ -387,6 +391,16 @@ def bmlt_create_meeting(headers: dict, payload: dict):
     return http_json("POST", url, data=payload, headers=headers)
 
 
+def try_formats_with_headers(headers: dict):
+    try:
+        return bmlt_get_formats(headers)
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            raise
+        body = e.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"/formats failed HTTP {e.code}: {body}") from None
+
+
 # ----------------------------
 # Main
 # ----------------------------
@@ -398,15 +412,38 @@ def main():
     wp_items = fetch_wp_all()
     print(f"Fetched {len(wp_items)} meetings from WordPress.")
 
-    if BMLT_AUTH_MODE == "token":
-        token = bmlt_login_token()
-        headers = {"Authorization": f"Bearer {token}"}
-        print("Authenticated to BMLT API using bearer token.")
-    else:
-        headers = auth_headers_basic()
-        print("Authenticated to BMLT API using basic auth.")
+    headers = None
+    format_key_to_id = {}
+    allowed_format_ids = set()
 
-    format_key_to_id, allowed_format_ids = bmlt_get_formats(headers)
+    def attempt_basic():
+        h = auth_headers_basic()
+        fk, allowed = try_formats_with_headers(h)
+        print("Authenticated to BMLT API using basic auth.")
+        return h, fk, allowed
+
+    def attempt_token():
+        token = bmlt_login_token()
+        h = {"Authorization": f"Bearer {token}"}
+        fk, allowed = try_formats_with_headers(h)
+        print("Authenticated to BMLT API using bearer token.")
+        return h, fk, allowed
+
+    if BMLT_AUTH_MODE == "basic":
+        headers, format_key_to_id, allowed_format_ids = attempt_basic()
+    elif BMLT_AUTH_MODE == "token":
+        headers, format_key_to_id, allowed_format_ids = attempt_token()
+    else:  # auto
+        try:
+            headers, format_key_to_id, allowed_format_ids = attempt_basic()
+        except urllib.error.HTTPError as e:
+            if e.code == 401:
+                print("Basic auth returned 401, attempting token auth...")
+                headers, format_key_to_id, allowed_format_ids = attempt_token()
+            else:
+                body = e.read().decode("utf-8", errors="replace")
+                raise RuntimeError(f"/formats failed HTTP {e.code}: {body}") from None
+
     print(f"Loaded {len(format_key_to_id)} format keys from BMLT (mapped from translations[].key).")
 
     geocode_cache = load_json_file(GEOCODE_CACHE_PATH, {})
